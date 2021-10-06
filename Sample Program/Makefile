@@ -1,22 +1,23 @@
 SHELL := /bin/bash
 
-AFLAGS		= -t none --cpu 6502
-LFLAGS		= -C R6500.cfg
-RMFLAGS		= -f
- 
-CC		= cc65
-CA		= ca65
+PROJECT		= namebadge
+
+CLFLAGS		:= -t none -v
+RMFLAGS		:= -f
+
 CL		= cl65
 LD		= ld65
 RM		= rm
 
-all: clean program.bin
+SRCS		= namebadge.a65
 
-program.o: program.a65
-	$(CA) $(AFLAGS) -o program.o program.a65
+TARGET		= R6500
 
-program.bin: program.o
-	$(LD) $(LFLAGS) -o program.bin program.o
+
+all: clean $(PROJECT).bin
+
+$(PROJECT).bin: $(SRCS)
+	$(CL) -C $(TARGET).cfg $(CLFLAGS) $(SRCS) $(LIBS) -o $(PROJECT).bin
 
 clean:
-	$(RM) $(RMFLAGS) *.o program.bin
+	$(RM) $(RMFLAGS) *.o *.bin
