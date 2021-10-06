@@ -1,0 +1,331 @@
+PORTA  = $80
+PORTB  = $81
+PORTC  = $82
+PORTD  = $83
+ULATCH = $84
+LLATCH = $85
+UCOUNT = $86
+LCOUNT = $87
+ULATLC = $88
+CPA0PE = $89
+CPA1NE = $8A
+;...unused...
+CONTROL= $8F
+
+SCRATCH = $10
+PNTLO = $11
+PNTHI = $12
+BUFF = $20
+
+;PA0	-	D0
+;PA1	-	D1
+;PA2	-	D2
+;PA3	-	D3
+;PA4	-	D4
+;PA5	-	D5
+;PA6	-	D6
+;PA7	-	D7
+
+;PB0	-	A0
+;PB1	-	A1
+;PB2	-	A2
+;PB3	-	A3
+;PB4	-	A4
+;PB5	-	~CE Display 1 (Left)
+;PB6	-	~CE Display 2 (Right)
+;PB7
+
+;PC0	-	~WR
+;PC1	-	~RD
+;PC2	-	~FL
+;PC3	-	~RST
+;PC4
+;PC5
+;PC6
+;PC7
+
+;	-=Write Operation=-
+;1. Put data onto bus
+;2. Put address and flash select onto bus
+;3. Assert the display's chip select
+;4. Assert and negate the write line (data is latched in on rising edge of ~WR)
+
+;	-=Read Operation=-
+;1. Put address and flash select onto bus
+;2. Assert the display's chip select
+;3. Assert and negate the read line (data is latched out on falling edge of ~RD)
+
+;
+;Macro to display a message with the "increment" effect one character at a time
+;
+.macro OCIMSG msg
+.scope
+	ldx #$00
+
+STRINGLOOP:	
+	lda #$20
+	sta SCRATCH
+	CHARLOOP:
+		ldy SCRATCH
+			DISPCHAR
+
+		lda SCRATCH
+		sta BUFF,x		;Store in BUFF for added fun with ACIMSG
+		cmp msg,x
+		beq ENDCHARLOOP
+
+		inc SCRATCH
+
+		jmp CHARLOOP
+
+	ENDCHARLOOP:
+
+	inx
+	cpx #$10
+	bne STRINGLOOP
+
+.endscope
+.endmacro
+
+;
+;Macro to display a message all at once, no effect
+;
+.macro MSG msg
+.scope
+	ldx #$00	;Clear the character counter
+
+DISPLOOP:
+	ldy msg,x	;Get the character indexed by the character counter
+	DISPCHAR	;Call the character write macro. CHAR_RAM[X] = Y
+
+	inx
+	cpx #$10
+	bne DISPLOOP
+
+.endscope
+.endmacro
+
+;
+;Macro to display a message with the "increment" effect on all characters at once
+;
+.macro ACIMSG msg
+.scope
+
+;	ldx #$00	;Fills the buffer with $20 (Space character)
+;	lda #$20
+;SETLOOP:
+;	sta BUFF,x
+;	inx
+;	cpx #$10
+;	bne SETLOOP
+
+COUNTLOOP:
+	ldx #$00
+	stx SCRATCH		;Reset SCRATCH to zero to indicate that there are no more chars to increment
+
+	STRINGLOOP:
+		lda BUFF,x		;Check if the char in BUFF needs to be incremented
+		cmp msg,x
+		beq NEXTCHAR
+
+		clc
+		adc #$01
+		and #$7f
+		sta BUFF,x
+		
+
+		lda #$01		;Store a non-zero value in SCRATCH to indicate that we are still incrementing this char
+		sta SCRATCH
+	NEXTCHAR:
+		inx				;Increment X for next char in the string
+		cpx #$10		;If we're not at the end of the string, keep gong
+		bne STRINGLOOP
+
+	MSG BUFF		;Display the current string in the buffer
+
+	lda SCRATCH		;If any of the chars were incremented, perform the loop again
+	bne COUNTLOOP
+
+.endscope
+.endmacro
+
+
+.macro WAIT long,short
+.scope
+	ldx short
+	ldy long
+	LOOP:
+	dex
+	bne LOOP
+	ldx short
+	dey
+	bne LOOP
+.endscope
+.endmacro
+
+.macro SHORTWAIT interval
+.scope
+	ldy interval
+	LOOP:
+	dey
+	bne LOOP
+.endscope
+.endmacro
+
+.macro DISPWRITE	;Writes data in A to address at X
+.scope
+;Set up display control words
+	sta PORTA	;Set data
+
+	stx PORTB	;Set address
+
+	lda #%00001110	;Assert write
+	sta PORTC
+
+		WAIT #$00,#$FF
+	lda #%11111111	;Negate write
+	sta PORTC
+		WAIT #$00,#$FF
+.endscope
+.endmacro
+
+.macro DISPCHAR		;Writes character in Y to character RAM at index X
+.scope
+	txa			;Transfer the character counter to A
+	bit BIT4	;Check if the second display is needed
+	bne DISP2
+
+;Select character in character RAM
+	ora #%11011000	;Select display 1
+	jmp OUTADDR
+DISP2:
+	ora #%10111000	;Select display 2
+
+OUTADDR:
+	sta PORTB		;Select display and character position
+
+;Write the character to character RAM
+	sty PORTA	;Put character onto the data bus
+
+	lda #%00001110	;Assert write
+	sta PORTC
+		SHORTWAIT #$ff
+	lda #%11111111	;Negate write
+	sta PORTC
+		SHORTWAIT #$ff
+.endscope
+.endmacro
+.segment "CODE"
+RESET:
+	sei
+	cld
+
+	lda #%00000001	;Load control register
+	sta CONTROL
+
+	lda #$00		;Clear data
+	sta PORTA
+
+	lda #%01100000	;Clear address and select no display
+	sta PORTB
+
+	lda #%11110111	;Reset the display modules
+	sta PORTC
+		WAIT #$FF,#$FF
+	lda #%00001111	;Negate reset
+	sta PORTC
+		WAIT #$FF,#$FF
+
+	lda #$02		;First transfer is eaten for some reason
+	ldx #%10010000
+		DISPWRITE
+
+
+MAIN:
+	lda #$02		;Ensure that settings stay
+	ldx #%10010000
+		DISPWRITE
+
+	ACIMSG MSG1
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	ACIMSG MSG0
+	WAIT #$ff,#$ff
+	OCIMSG MSG2
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	OCIMSG MSG3
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	OCIMSG MSG4
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+
+	ACIMSG MSG0
+	WAIT #$ff,#$ff
+	
+	OCIMSG MSG5
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	OCIMSG MSG6
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	OCIMSG MSG7
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	OCIMSG MSG8
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	OCIMSG MSG9
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+	WAIT #$ff,#$ff
+
+	ACIMSG MSG0
+	WAIT #$ff,#$ff
+
+	jmp MAIN	;Do it again
+
+
+
+
+MSG0:
+.byte "                "
+MSG1:
+.byte "  TangentDelta  "
+MSG2:
+.byte " This is a 6502 "
+MSG3:
+.byte "microcontroller "
+MSG4:
+.byte "  on a badge!   "
+MSG5:
+.byte "Rockwell R6500/1"
+MSG6:
+.byte "64 Bytes of RAM "
+MSG7:
+.byte "   Up to 4MHz   "
+MSG8:
+.byte "32 pins of GPIO "
+MSG9:
+.byte "   and more!    "
+
+
+
+
+
+BIT4:
+.byte $08
+
+.segment "VECTORS"
+.word	RESET	;$FFA/$FFB = NMI
+.word	RESET	;$FFC/$FFD = RESET
+.word	RESET	;$FFE/$FFF = IRQ/BRK
